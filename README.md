@@ -1,6 +1,6 @@
-# f6n - Lambda Function Manager
+# f6n - Serverless Function Manager
 
-A beautiful terminal UI for managing AWS Lambda functions, inspired by k9s.
+A multi-cloud beautiful terminal UI for managing serverless functions, inspired by k9s.
 
 ```
   _____  ________       
@@ -13,7 +13,7 @@ _/ ____\/  _____/ ____
 
 ## Features
 
-- 📋 **List all Lambda functions** in your AWS account
+- 📋 **List all Lambda/Cloud functions** in your AWS/GCP account
 - 🔍 **Inspect function details** including configuration, environment variables, and metadata
 - 📊 **View function metrics** and status
 - 🔄 **Refresh in real-time** to see the latest changes
