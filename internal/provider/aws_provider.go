@@ -11,13 +11,15 @@ import (
 
 // AWSProvider implements the Provider interface for AWS Lambda
 type AWSProvider struct {
-	client *aws.LambdaClient
+	client   *aws.LambdaClient
+	stsClient *aws.StsClient
 }
 
 // NewAWSProvider creates a new AWS provider
-func NewAWSProvider(client *aws.LambdaClient) *AWSProvider {
+func NewAWSProvider(client *aws.LambdaClient, stsClient *aws.StsClient) *AWSProvider {
 	return &AWSProvider{
-		client: client,
+		client:   client,
+		stsClient: stsClient,
 	}
 }
 
@@ -29,6 +31,10 @@ func (p *AWSProvider) GetProviderName() CloudProvider {
 // GetRegion returns the AWS region
 func (p *AWSProvider) GetRegion() string {
 	return p.client.Region()
+}
+
+func (p *AWSProvider) GetAccountID(ctx context.Context) (string, error) {
+	return p.stsClient.GetAccountID(ctx)
 }
 
 // ListFunctions lists all Lambda functions

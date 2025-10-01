@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"f6n/internal/logger"
 	"f6n/internal/provider"
 
 	"github.com/charmbracelet/bubbles/table"
@@ -31,6 +32,7 @@ type Model struct {
 	functions     []provider.FunctionInfo
 	allFunctions  []provider.FunctionInfo // Unfiltered list
 	provider      provider.Provider
+	accountID     string
 	currentView   ViewType
 	selectedFunc  *provider.FunctionInfo
 	environment   string
@@ -43,10 +45,69 @@ type Model struct {
 	err           error
 }
 
-// functionsLoadedMsg is sent when functions are loaded from the provider
 type functionsLoadedMsg struct {
 	functions []provider.FunctionInfo
 	err       error
+}
+
+type accountIDLoadedMsg struct {
+	accountID string
+	err       error
+}
+
+func (m Model) fetchAccountID() tea.Cmd {
+	return func() tea.Msg {
+		accountID, err := m.provider.GetAccountID(context.Background())
+		if err != nil {
+			return accountIDLoadedMsg{err: err}
+		}
+		return accountIDLoadedMsg{accountID: accountID}
+	}
+}
+
+type functionCodeLoadedMsg struct {
+	code string
+	err  error
+}
+
+type functionLogsLoadedMsg struct {
+	logs []string
+	err  error
+}
+
+func (m Model) fetchFunctions() tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		functions, err := m.provider.ListFunctions(ctx)
+		if err != nil {
+			return functionsLoadedMsg{err: err}
+		}
+		return functionsLoadedMsg{functions: functions}
+	}
+}
+
+func (m Model) fetchFunctionCode(name string) tea.Cmd {
+	logger.Logger.Printf("Fetching function code for: %s", name)
+	return func() tea.Msg {
+		code, err := m.provider.GetFunctionCode(context.Background(), name)
+		if err != nil {
+			logger.Logger.Printf("Error fetching function code: %v", err)
+			return functionCodeLoadedMsg{err: err}
+		}
+		logger.Logger.Printf("Function code loaded successfully")
+		return functionCodeLoadedMsg{code: code}
+	}
+}
+
+func (m Model) fetchFunctionLogs(name string) tea.Cmd {
+	return func() tea.Msg {
+		logs, err := m.provider.GetFunctionLogs(context.Background(), name, 200)
+		if err != nil {
+			println("Error fetching function logs:", err.Error())
+			return functionLogsLoadedMsg{err: err}
+		}
+		return functionLogsLoadedMsg{logs: logs}
+	}
 }
 
 // NewModel creates a new TUI model
@@ -108,21 +169,13 @@ func (m Model) Init() tea.Cmd {
 	}
 	return tea.Batch(
 		m.fetchFunctions(),
+		m.fetchAccountID(),
 		tea.EnterAltScreen,
 	)
 }
 
 // fetchFunctions loads functions from the cloud provider
-func (m Model) fetchFunctions() tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		functions, err := m.provider.ListFunctions(ctx)
-		if err != nil {
-			return functionsLoadedMsg{err: err}
-		}
-		return functionsLoadedMsg{functions: functions}
-	}
-}
+
 
 // Update handles messages and updates the model
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -130,8 +183,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		return m.handleWindowSize(msg)
 
+		case accountIDLoadedMsg:
+		if msg.err == nil {
+			m.accountID = msg.accountID
+		}
+		return m, nil
+
 	case functionsLoadedMsg:
 		return m.handleFunctionsLoaded(msg)
+
+	case functionLogsLoadedMsg:
+		if msg.err != nil {
+			m.viewport.SetContent(fmt.Sprintf("Error: %v", msg.err))
+		} else {
+			m.viewport.SetContent(strings.Join(msg.logs, "\n"))
+		}
+		return m, nil
+
+	case functionCodeLoadedMsg:
+		if msg.err != nil {
+			m.viewport.SetContent(fmt.Sprintf("Error: %v", msg.err))
+		} else {
+			m.viewport.SetContent(msg.code)
+		}
+		return m, nil
 
 	case tea.KeyMsg:
 		return m.handleKeyPress(msg)
@@ -226,6 +301,7 @@ func (m *Model) filterFunctions() {
 
 // handleKeyPress handles keyboard input
 func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	logger.Logger.Printf("Key pressed: %s", msg.String())
 	// Handle input modes
 	if m.inputMode == FilterMode || m.inputMode == CommandMode {
 		return m.handleInputMode(msg)
@@ -257,7 +333,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Enter command mode
 		m.inputMode = CommandMode
 		m.textInput.Placeholder = "Enter command (:q to quit)..."
-		m.textInput.SetValue(":")
+			m.textInput.SetValue(":")
 		m.textInput.Focus()
 		m.textInput.CursorEnd()
 		return m, textinput.Blink
@@ -285,7 +361,31 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "r":
+	case "l":
+		if m.currentView == ListView && len(m.functions) > 0 {
+			selectedIdx := m.table.Cursor()
+			if selectedIdx < len(m.functions) {
+				m.selectedFunc = &m.functions[selectedIdx]
+				m.currentView = LogsView
+				m.viewport.SetContent("Loading logs...")
+				return m, m.fetchFunctionLogs(m.selectedFunc.Name)
+			}
+		}
+		return m, nil
+
+	case "c":
+		if m.currentView == ListView && len(m.functions) > 0 {
+			selectedIdx := m.table.Cursor()
+			if selectedIdx < len(m.functions) {
+				m.selectedFunc = &m.functions[selectedIdx]
+				m.currentView = CodeView
+				m.viewport.SetContent("Loading code...")
+				return m, m.fetchFunctionCode(m.selectedFunc.Name)
+			}
+		}
+		return m, nil
+
+		case "r":
 		if m.currentView == ListView {
 			m.loading = true
 			return m, m.fetchFunctions()

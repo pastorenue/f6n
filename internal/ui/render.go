@@ -30,7 +30,7 @@ func renderView(m Model) string {
 	ascii := renderASCII(m.width)
 
 	// Info rows
-	info := renderInfo(m.provider, m.environment, len(m.functions))
+	info := renderInfo(m)
 
 	// Shortcuts
 	shortcuts := renderShortcuts()
@@ -113,18 +113,25 @@ _/ ____\/  _____/ ____
 }
 
 // renderInfo renders the info section in a single column
-func renderInfo(prov provider.Provider, environment string, functionCount int) string {
-	providerName := string(prov.GetProviderName())
-	region := prov.GetRegion()
-	
+func renderInfo(m Model) string {
+	providerName := string(m.provider.GetProviderName())
+	region := m.provider.GetRegion()
+	accountID := m.accountID
+
+	accountKey := "Account"
+	if providerName == "gcp" {
+		accountKey = "Project"
+	}
+
 	info := []struct {
 		key   string
 		value string
 	}{
 		{"Provider", strings.ToUpper(providerName)},
+		{accountKey, accountID},
 		{"Region", region},
-		{"Environment", environment},
-		{"Functions", fmt.Sprintf("%d", functionCount)},
+		{"Environment", m.environment},
+		{"Functions", fmt.Sprintf("%d", len(m.functions))},
 		{"CPU", getCPUInfo()},
 		{"MEM", getMemInfo()},
 		{"OS", getOSInfo()},
@@ -137,6 +144,10 @@ func renderInfo(prov provider.Provider, environment string, functionCount int) s
 		// Pink for key, teal for value
 		line := styles.CommandKeyStyle.Render(item.key+":") + " " + styles.InfoValueStyle.Render(item.value)
 		lines = append(lines, line)
+	}
+
+	if providerName == "gcp" {
+		lines = append(lines, styles.HelpStyle.Render("\n(Cloud Functions, 1st Gen)"))
 	}
 
 	return strings.Join(lines, "\n")

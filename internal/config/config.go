@@ -17,7 +17,7 @@ type Config struct {
 	ShowVersion bool
 	Provider    string // aws or gcp
 	GCPProject  string // GCP project ID
-	GCPLocation string // GCP location/region
+	GCPRegion   string // GCP region
 }
 
 // Load reads configuration from environment variables and command-line flags
@@ -30,7 +30,7 @@ func Load() *Config {
 	flag.StringVar(&cfg.Environment, "env", "", "Environment name (defaults to STAGE env var or dev)")
 	flag.StringVar(&cfg.Profile, "profile", "", "AWS profile to use (defaults to AWS_PROFILE env var)")
 	flag.StringVar(&cfg.GCPProject, "gcp-project", "", "GCP project ID (defaults to GCP_PROJECT env var)")
-	flag.StringVar(&cfg.GCPLocation, "gcp-location", "", "GCP location (defaults to GCP_LOCATION env var or us-central1)")
+	flag.StringVar(&cfg.GCPRegion, "gcp-region", "", "GCP region (defaults to GCP_REGION env var or us-central1)")
 	flag.StringVar(&cfg.LogLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	flag.BoolVar(&cfg.ShowVersion, "version", false, "Show version information")
 	flag.BoolVar(&cfg.ShowVersion, "v", false, "Show version information (shorthand)")
@@ -72,10 +72,10 @@ func Load() *Config {
 		cfg.GCPProject = os.Getenv("GCP_PROJECT")
 	}
 	
-	if cfg.GCPLocation == "" {
-		cfg.GCPLocation = os.Getenv("GCP_LOCATION")
-		if cfg.GCPLocation == "" {
-			cfg.GCPLocation = "us-central1"
+	if cfg.GCPRegion == "" {
+		cfg.GCPRegion = os.Getenv("GCP_REGION")
+		if cfg.GCPRegion == "" {
+			cfg.GCPRegion = "us-central1"
 		}
 	}
 
