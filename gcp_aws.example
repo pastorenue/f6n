@@ -1,0 +1,645 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"google.golang.org/api/iterator"
+
+	cloudfunctions "cloud.google.com/go/functions/apiv2"
+	"cloud.google.com/go/functions/apiv2/functionspb"
+)
+
+// Styles
+var (
+	TASCIIStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00FF00")).
+			Bold(true)
+
+	THeaderStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00FF00")).
+			Background(lipgloss.Color("#1a1a1a"))
+
+	TStatusBarStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(lipgloss.Color("#3a3a3a")).
+			Padding(0, 1)
+
+	THelpStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#626262"))
+
+	TSelectedStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00FF00")).
+			Bold(true)
+
+	TInfoLabelStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00FF00")).
+			Bold(true)
+
+	TInfoValueStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFFFFF"))
+)
+
+type TView int
+
+const (
+	TListView TView = iota
+	TDetailView
+)
+
+type cloudProvider int
+
+const (
+	awsProvider cloudProvider = iota
+	gcpProvider
+)
+
+type functionInfo struct {
+	name         string
+	runtime      string
+	memory       string
+	timeout      string
+	lastModified string
+	arn          string
+	handler      string
+	description  string
+	role         string
+	envVars      map[string]string
+}
+
+type MainModel struct {
+	table           table.Model
+	viewport        viewport.Model
+	functions       []functionInfo
+	lambdaClient    *lambda.Client
+	gcpClient       *cloudfunctions.FunctionClient
+	currentView     TView
+	selectedFunc    *functionInfo
+	environment     string
+	region          string
+	provider        cloudProvider
+	gcpProject      string
+	width           int
+	height          int
+	loading         bool
+	err             error
+}
+
+type funcLoadedMsg struct {
+	functions []functionInfo
+	err       error
+}
+
+func initializeAWSClient(region string) (*lambda.Client, error) {
+	cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(region))
+	if err != nil {
+		return nil, err
+	}
+	return lambda.NewFromConfig(cfg), nil
+}
+
+func initGCPClient(ctx context.Context) (*cloudfunctions.FunctionClient, error) {
+	client, err := cloudfunctions.NewFunctionClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
+func fetchAWSFunctions(client *lambda.Client) tea.Cmd {
+	return func() tea.Msg {
+		// TODO: Remove dummy data once AWS integration is working
+		dummyFunctions := []functionInfo{
+			{
+				name:         "user-authentication-service",
+				runtime:      "nodejs20.x",
+				memory:       "512 MB",
+				timeout:      "30 s",
+				lastModified: "2024-09-15T10:30:00.000+0000",
+				arn:          "arn:aws:lambda:us-east-1:123456789:function:user-auth",
+				handler:      "index.handler",
+				description:  "Handles user authentication and JWT token generation",
+				role:         "arn:aws:iam::123456789:role/lambda-exec-role",
+			},
+			{
+				name:         "payment-processor",
+				runtime:      "python3.12",
+				memory:       "1024 MB",
+				timeout:      "60 s",
+				lastModified: "2024-09-20T14:22:00.000+0000",
+				arn:          "arn:aws:lambda:us-east-1:123456789:function:payment",
+				handler:      "app.lambda_handler",
+				description:  "Processes payment transactions via Stripe API",
+				role:         "arn:aws:iam::123456789:role/payment-lambda-role",
+			},
+			{
+				name:         "email-notification-sender",
+				runtime:      "nodejs18.x",
+				memory:       "256 MB",
+				timeout:      "15 s",
+				lastModified: "2024-09-18T08:45:00.000+0000",
+				arn:          "arn:aws:lambda:us-east-1:123456789:function:email-sender",
+				handler:      "index.sendEmail",
+				description:  "Sends email notifications using SES",
+				role:         "arn:aws:iam::123456789:role/email-lambda-role",
+			},
+		}
+
+		return funcLoadedMsg{functions: dummyFunctions}
+	}
+}
+
+func fetchGCPFunctions(client *cloudfunctions.FunctionClient, projectID, location string) tea.Cmd {
+	return func() tea.Msg {
+		// TODO: Remove dummy data once GCP integration is working
+		// dummyFunctions := []functionInfo{
+		// 	{
+		// 		name:         "user-auth-handler",
+		// 		runtime:      "nodejs20",
+		// 		memory:       "512 MB",
+		// 		timeout:      "60 s",
+		// 		lastModified: "2024-09-16T11:20:00Z",
+		// 		arn:          fmt.Sprintf("projects/%s/locations/%s/functions/user-auth-handler", projectID, location),
+		// 		handler:      "userAuth",
+		// 		description:  "Handles user authentication with Firebase",
+		// 	},
+		// 	{
+		// 		name:         "image-processor",
+		// 		runtime:      "python311",
+		// 		memory:       "1024 MB",
+		// 		timeout:      "120 s",
+		// 		lastModified: "2024-09-19T09:15:00Z",
+		// 		arn:          fmt.Sprintf("projects/%s/locations/%s/functions/image-processor", projectID, location),
+		// 		handler:      "process_image",
+		// 		description:  "Processes and resizes images uploaded to Cloud Storage",
+		// 	},
+		// 	{
+		// 		name:         "pubsub-event-handler",
+		// 		runtime:      "go121",
+		// 		memory:       "256 MB",
+		// 		timeout:      "30 s",
+		// 		lastModified: "2024-09-21T14:30:00Z",
+		// 		arn:          fmt.Sprintf("projects/%s/locations/%s/functions/pubsub-handler", projectID, location),
+		// 		handler:      "HandlePubSub",
+		// 		description:  "Processes events from Pub/Sub topic",
+		// 	},
+		// }
+
+		// return funcLoadedMsg{functions: dummyFunctions}
+
+		// Real GCP call (commented out for now)
+		ctx := context.TODO()
+		parent := fmt.Sprintf("projects/%s/locations/%s", projectID, location)
+		req := &functionspb.ListFunctionsRequest{Parent: parent}
+		// TODO: Remove dummy data once GCP integration is working
+		var functions []functionInfo
+		it := client.ListFunctions(ctx, req)
+		for {
+			fn, err := it.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				return funcLoadedMsg{err: err}
+			}
+			
+			functions = append(functions, functionInfo{
+				name:         fn.Name,
+				runtime:      fn.BuildConfig.Runtime,
+				memory:       fmt.Sprintf("%s MB", fn.ServiceConfig.AvailableMemory),
+				timeout:      fmt.Sprintf("%d s", fn.ServiceConfig.TimeoutSeconds),
+				lastModified: fn.UpdateTime.AsTime().Format(time.RFC3339),
+				arn:          fn.Name,
+				handler:      fn.BuildConfig.EntryPoint,
+				description:  fn.Description,
+				envVars:      fn.ServiceConfig.EnvironmentVariables,
+			})
+		}
+
+		return funcLoadedMsg{functions: functions}
+	}
+}
+
+func initModel() MainModel {
+	// Determine cloud provider
+	providerStr := os.Getenv("CLOUD_PROVIDER")
+	var provider cloudProvider
+	if providerStr == "gcp" {
+		provider = gcpProvider
+	} else {
+		provider = awsProvider // default
+	}
+
+	region := os.Getenv("AWS_REGION")
+	if region == "" {
+		region = "us-east-1"
+	}
+
+	gcpProject := os.Getenv("GCP_PROJECT_ID")
+	if gcpProject == "" {
+		gcpProject = "my-project"
+	}
+
+	environment := os.Getenv("STAGE")
+	if environment == "" {
+		environment = "dev"
+	}
+
+	var lambdaClient *lambda.Client
+	var gcpClient *cloudfunctions.FunctionClient
+	var err error
+
+	if provider == awsProvider {
+		lambdaClient, err = initializeAWSClient(region)
+	} else {
+		gcpClient, err = initGCPClient(context.Background())
+	}
+
+	if err != nil {
+		return MainModel{
+			err:         err,
+			environment: environment,
+			region:      region,
+			provider:    provider,
+			gcpProject:  gcpProject,
+		}
+	}
+
+	columns := []table.Column{
+		{Title: "Function Name", Width: 40},
+		{Title: "Runtime", Width: 15},
+		{Title: "Memory", Width: 10},
+		{Title: "Timeout", Width: 10},
+		{Title: "Last Modified", Width: 20},
+	}
+
+	t := table.New(
+		table.WithColumns(columns),
+		table.WithFocused(true),
+		table.WithHeight(20),
+	)
+
+	s := table.DefaultStyles()
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("#00FF00")).
+		BorderBottom(true).
+		Bold(true)
+	s.Selected = s.Selected.
+		Foreground(lipgloss.Color("#000000")).
+		Background(lipgloss.Color("#00FF00")).
+		Bold(true)
+	t.SetStyles(s)
+
+	vp := viewport.New(80, 20)
+	vp.Style = lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#00FF00")).
+		Padding(1, 2)
+
+	return MainModel{
+		table:        t,
+		viewport:     vp,
+		lambdaClient: lambdaClient,
+		gcpClient:    gcpClient,
+		currentView:  TListView,
+		environment:  environment,
+		region:       region,
+		provider:     provider,
+		gcpProject:   gcpProject,
+		loading:      true,
+	}
+}
+
+func (m MainModel) Init() tea.Cmd {
+	if m.err != nil {
+		return tea.Quit
+	}
+	var fetchCmd tea.Cmd
+	if m.provider == awsProvider {
+		fetchCmd = fetchAWSFunctions(m.lambdaClient)
+	} else {
+		fetchCmd = fetchGCPFunctions(m.gcpClient, m.gcpProject, m.region)
+	}
+	return tea.Batch(
+		fetchCmd,
+		tea.EnterAltScreen,
+	)
+}
+
+func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		
+		// Calculate available height for table (subtract header, info rows, shortcuts, help)
+		availableHeight := msg.Height - 15
+		if availableHeight < 5 {
+			availableHeight = 5
+		}
+		
+		m.table.SetHeight(availableHeight)
+		
+		// Update table column widths to span entire width
+		totalWidth := msg.Width - 4
+		m.table.SetColumns([]table.Column{
+			{Title: "Function Name", Width: int(float64(totalWidth) * 0.35)},
+			{Title: "Runtime", Width: int(float64(totalWidth) * 0.15)},
+			{Title: "Memory", Width: int(float64(totalWidth) * 0.12)},
+			{Title: "Timeout", Width: int(float64(totalWidth) * 0.12)},
+			{Title: "Last Modified", Width: int(float64(totalWidth) * 0.26)},
+		})
+		
+		m.viewport.Width = msg.Width - 4
+		m.viewport.Height = msg.Height - 8
+		return m, nil
+
+	case funcLoadedMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.err = msg.err
+			// Don't quit, just show the error in the UI
+			return m, nil
+		}
+		m.functions = msg.functions
+		rows := []table.Row{}
+		for _, fn := range msg.functions {
+			rows = append(rows, table.Row{
+				fn.name,
+				fn.runtime,
+				fn.memory,
+				fn.timeout,
+				fn.lastModified,
+			})
+		}
+		m.table.SetRows(rows)
+		return m, nil
+
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "q":
+			return m, tea.Quit
+
+		case "enter":
+			if m.currentView == TListView && len(m.functions) > 0 {
+				selectedIdx := m.table.Cursor()
+				if selectedIdx < len(m.functions) {
+					m.selectedFunc = &m.functions[selectedIdx]
+					m.currentView = TDetailView
+					m.viewport.SetContent(m.formatFunctionDetails())
+				}
+			}
+			return m, nil
+
+		case "esc":
+			if m.currentView == TDetailView {
+				m.currentView = TListView
+			}
+			return m, nil
+
+		case "r":
+			if m.currentView == TListView {
+				m.loading = true
+				if m.provider == awsProvider {
+					return m, fetchAWSFunctions(m.lambdaClient)
+				} else {
+					return m, fetchGCPFunctions(m.gcpClient, m.gcpProject, m.region)
+				}
+			}
+			return m, nil
+
+		case "p":
+			// Toggle provider
+			if m.currentView == TListView {
+				if m.provider == awsProvider {
+					m.provider = gcpProvider
+					if m.gcpClient == nil {
+						client, err := initGCPClient(context.Background())
+						if err != nil {
+							m.err = err
+							return m, nil
+						}
+						m.gcpClient = client
+					}
+					m.loading = true
+					return m, fetchGCPFunctions(m.gcpClient, m.gcpProject, m.region)
+				} else {
+					m.provider = awsProvider
+					if m.lambdaClient == nil {
+						client, err := initializeAWSClient(m.region)
+						if err != nil {
+							m.err = err
+							return m, nil
+						}
+						m.lambdaClient = client
+					}
+					m.loading = true
+					return m, fetchAWSFunctions(m.lambdaClient)
+				}
+			}
+			return m, nil
+		}
+	}
+
+	var cmd tea.Cmd
+	if m.currentView == TListView {
+		m.table, cmd = m.table.Update(msg)
+	} else {
+		m.viewport, cmd = m.viewport.Update(msg)
+	}
+	return m, cmd
+}
+
+func (m MainModel) formatFunctionDetails() string {
+	if m.selectedFunc == nil {
+		return ""
+	}
+
+	fn := m.selectedFunc
+	var b strings.Builder
+
+	b.WriteString(TSelectedStyle.Render("━━━ Function Details ━━━") + "\n\n")
+	
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Name: "))
+	b.WriteString(fn.name + "\n\n")
+
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("ARN/Path: "))
+	b.WriteString(fn.arn + "\n\n")
+
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Runtime: "))
+	b.WriteString(fn.runtime + "\n\n")
+
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Handler: "))
+	b.WriteString(fn.handler + "\n\n")
+
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Memory: "))
+	b.WriteString(fn.memory + "\n\n")
+
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Timeout: "))
+	b.WriteString(fn.timeout + "\n\n")
+
+	if fn.description != "" {
+		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Description: "))
+		b.WriteString(fn.description + "\n\n")
+	}
+
+	if fn.role != "" {
+		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Role: "))
+		b.WriteString(fn.role + "\n\n")
+	}
+
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Last Modified: "))
+	b.WriteString(fn.lastModified + "\n\n")
+
+	if len(fn.envVars) > 0 {
+		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Environment Variables:\n"))
+		for k, v := range fn.envVars {
+			b.WriteString(fmt.Sprintf("  %s: %s\n", k, v))
+		}
+	}
+
+	return b.String()
+}
+
+func (m MainModel) TView() string {
+	if m.err != nil {
+		errView := fmt.Sprintf("\n  Error: %v\n\n  Press q to quit.\n", m.err)
+		return m.renderASCII() + "\n" + errView
+	}
+
+	if m.loading {
+		return m.renderASCII() + "\n\n  Loading Lambda functions...\n\n"
+	}
+
+	var content string
+	
+	// ASCII Art Header
+	ascii := m.renderASCII()
+	
+	// Info rows
+	info := m.renderInfo()
+	
+	// Shortcuts
+	shortcuts := m.renderShortcuts()
+
+	// Main content
+	if len(m.functions) == 0 {
+		content = "\n  No Lambda functions found in this region.\n\n  " +
+			helpStyle.Render("Press 'r' to refresh or 'q' to quit")
+	} else if m.currentView == TListView {
+		content = m.table.View()
+	} else {
+		content = m.viewport.View()
+	}
+
+	// Help text
+	var help string
+	if m.currentView == TListView {
+		help = THelpStyle.Render("Use keyboard shortcuts above to navigate")
+	} else {
+		help = THelpStyle.Render("↑/↓: scroll • esc: back • q: quit")
+	}
+
+	return fmt.Sprintf("%s\n%s\n%s\n\n%s\n\n%s", ascii, info, shortcuts, content, help)
+}
+
+func (m MainModel) renderASCII() string {
+	art := `
+  _____ __   ____  
+ / ___// /_ / __ \ 
+/ /_  / __ \/ / / / 
+\___//_/ /_/_/ /_/  
+`
+	return TASCIIStyle.Render(art)
+}
+
+func (m MainModel) renderInfo() string {
+	providerName := "AWS Lambda"
+	locationLabel := "Region"
+	locationValue := m.region
+	
+	if m.provider == gcpProvider {
+		providerName = "GCP Cloud Functions"
+		locationLabel = "Project"
+		locationValue = m.gcpProject
+	}
+
+	providerLine := TInfoLabelStyle.Render("Provider: ") + TInfoValueStyle.Render(providerName)
+	locationLine := TInfoLabelStyle.Render(locationLabel+": ") + TInfoValueStyle.Render(locationValue)
+	envLine := TInfoLabelStyle.Render("Environment: ") + TInfoValueStyle.Render(m.environment)
+	functionsLine := TInfoLabelStyle.Render("Functions: ") + TInfoValueStyle.Render(fmt.Sprintf("%d", len(m.functions)))
+
+	return fmt.Sprintf("%s\n%s\n%s\n%s", providerLine, locationLine, envLine, functionsLine)
+}
+
+func (m MainModel) renderShortcuts() string {
+	shortcuts := []string{
+		"<enter>: view details",
+		"<r>: refresh",
+		"<p>: switch provider",
+		"<e>: change env",
+		"<l>: logs",
+		"<a>: api gateway",
+		"<c>: view code",
+		"<q>: quit",
+	}
+	
+	var shortcutStr string
+	for i, s := range shortcuts {
+		if i > 0 {
+			shortcutStr += " │ "
+		}
+		shortcutStr += THelpStyle.Render(s)
+	}
+	
+	return "\n" + shortcutStr + "\n"
+}
+
+func main_debug() {
+	// Create a debug log file
+	f, _ := os.Create("lambda-tui-debug.log")
+	defer f.Close()
+	
+	fmt.Fprintln(f, "Starting Lambda TUI...")
+
+	m := initModel()
+
+	fmt.Fprintf(f, "Initial model created. Error: %v, Loading: %v\n", m.err, m.loading)
+	
+	// Debug: Check for initialization errors
+	if m.err != nil {
+		fmt.Printf("Initialization error: %v\n", m.err)
+		fmt.Println("\nMake sure your AWS credentials are configured:")
+		fmt.Println("  - Run 'aws configure' or")
+		fmt.Println("  - Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY")
+		os.Exit(1)
+	}
+
+	fmt.Fprintln(f, "Creating tea program...")
+
+	p := tea.NewProgram(
+		m,
+		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
+	)
+
+	fmt.Fprintln(f, "Running tea program...")
+	
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(f, "Runtime error: %v\n", err)
+		fmt.Printf("Runtime error: %v\n", err)
+		os.Exit(1)
+	}
+	
+	fmt.Fprintln(f, "Program exited normally")
+}
