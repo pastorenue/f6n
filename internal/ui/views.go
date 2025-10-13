@@ -12,6 +12,10 @@ const (
 	LogsView
 	// CodeView shows the code for a selected function
 	CodeView
+	// CodeDisplayView shows downloaded code files in a scrollable pane
+	CodeDisplayView
+	// MetricsView shows metrics and charts for a selected function
+	MetricsView
 )
 
 // String returns the string representation of the view type
@@ -25,6 +29,10 @@ func (v ViewType) String() string {
 		return "logs"
 	case CodeView:
 		return "code"
+	case CodeDisplayView:
+		return "code-display"
+	case MetricsView:
+		return "metrics"
 	default:
 		return "unknown"
 	}
