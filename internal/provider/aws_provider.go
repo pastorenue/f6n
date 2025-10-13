@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"f6n/internal/aws"
 
@@ -11,13 +12,15 @@ import (
 
 // AWSProvider implements the Provider interface for AWS Lambda
 type AWSProvider struct {
-	client *aws.LambdaClient
+	client    *aws.LambdaClient
+	stsClient *aws.StsClient
 }
 
 // NewAWSProvider creates a new AWS provider
-func NewAWSProvider(client *aws.LambdaClient) *AWSProvider {
+func NewAWSProvider(client *aws.LambdaClient, stsClient *aws.StsClient) *AWSProvider {
 	return &AWSProvider{
-		client: client,
+		client:    client,
+		stsClient: stsClient,
 	}
 }
 
@@ -29,6 +32,10 @@ func (p *AWSProvider) GetProviderName() CloudProvider {
 // GetRegion returns the AWS region
 func (p *AWSProvider) GetRegion() string {
 	return p.client.Region()
+}
+
+func (p *AWSProvider) GetAccountID(ctx context.Context) (string, error) {
+	return p.stsClient.GetAccountID(ctx)
 }
 
 // ListFunctions lists all Lambda functions
@@ -97,6 +104,75 @@ func (p *AWSProvider) GetFunctionLogs(ctx context.Context, name string, limit in
 	}, nil
 }
 
+// StreamFunctionLogs streams logs for a function in real-time (placeholder)
+func (p *AWSProvider) StreamFunctionLogs(ctx context.Context, functionName string) (<-chan LogEntry, <-chan error) {
+	logChan := make(chan LogEntry, 1)
+	errChan := make(chan error, 1)
+
+	go func() {
+		defer close(logChan)
+		defer close(errChan)
+
+		// Send a placeholder message
+		logChan <- LogEntry{
+			Timestamp: time.Now(),
+			Severity:  "INFO",
+			Message:   "CloudWatch Logs streaming coming soon... Use AWS Console for real-time logs",
+			Labels:    map[string]string{"function": functionName},
+		}
+	}()
+
+	return logChan, errChan
+}
+
+// GetFunctionMetrics retrieves metrics for a Lambda function (placeholder)
+func (p *AWSProvider) GetFunctionMetrics(ctx context.Context, functionName string, startTime, endTime time.Time) (*FunctionMetrics, error) {
+	// TODO: Implement CloudWatch metrics integration
+
+	// Create sample metrics data for now
+	metrics := &FunctionMetrics{
+		FunctionName: functionName,
+		TimeRange: struct {
+			Start time.Time
+			End   time.Time
+		}{Start: startTime, End: endTime},
+	}
+
+	// Generate sample data points
+	now := time.Now()
+	samplePoints := []MetricDataPoint{
+		{Timestamp: now.Add(-1 * time.Hour), Value: 10},
+		{Timestamp: now.Add(-45 * time.Minute), Value: 15},
+		{Timestamp: now.Add(-30 * time.Minute), Value: 8},
+		{Timestamp: now.Add(-15 * time.Minute), Value: 12},
+		{Timestamp: now, Value: 6},
+	}
+
+	metrics.Invocations = MetricData{
+		MetricName:  "Invocations",
+		Unit:        "count",
+		Description: "Number of function invocations (sample data)",
+		DataPoints:  samplePoints,
+	}
+
+	durationPoints := []MetricDataPoint{
+		{Timestamp: now.Add(-1 * time.Hour), Value: 250.5},
+		{Timestamp: now.Add(-45 * time.Minute), Value: 180.2},
+		{Timestamp: now.Add(-30 * time.Minute), Value: 320.8},
+		{Timestamp: now.Add(-15 * time.Minute), Value: 195.3},
+		{Timestamp: now, Value: 275.1},
+	}
+
+	metrics.Duration = MetricData{
+		MetricName:  "Duration",
+		Unit:        "ms",
+		Description: "Average function execution duration (sample data)",
+		DataPoints:  durationPoints,
+	}
+
+	return metrics, nil
+}
+
 // GetEndpoints gets API Gateway endpoints associated with a function (placeholder)
 func (p *AWSProvider) GetEndpoints(ctx context.Context, name string) ([]string, error) {
 	// TODO: Implement API Gateway integration
@@ -104,6 +180,15 @@ func (p *AWSProvider) GetEndpoints(ctx context.Context, name string) ([]string, 
 		"API Gateway integration coming soon...",
 		"Use AWS Console to view endpoints for now",
 	}, nil
+}
+
+// DownloadFunctionCode downloads the function code to a local path (placeholder)
+func (p *AWSProvider) DownloadFunctionCode(ctx context.Context, name, destination string) error {
+	// Add logging to track AWS download attempts
+	fmt.Printf("AWS DownloadFunctionCode called - function: %s, destination: %s\n", name, destination)
+	// TODO: Implement AWS Lambda function code download
+	// This could use the GetFunction API with Code location to download from S3
+	return fmt.Errorf("AWS Lambda code download not yet implemented")
 }
 
 // Helper functions

@@ -2,7 +2,45 @@ package provider
 
 import (
 	"context"
+	"time"
 )
+
+// LogEntry represents a single log entry
+type LogEntry struct {
+	Timestamp time.Time
+	Severity  string
+	Message   string
+	Labels    map[string]string
+}
+
+// MetricDataPoint represents a single metric data point
+type MetricDataPoint struct {
+	Timestamp time.Time
+	Value     float64
+}
+
+// MetricData represents metrics for a function
+type MetricData struct {
+	MetricName  string
+	Unit        string
+	DataPoints  []MetricDataPoint
+	Description string
+}
+
+// FunctionMetrics represents comprehensive metrics for a function
+type FunctionMetrics struct {
+	FunctionName string
+	TimeRange    struct {
+		Start time.Time
+		End   time.Time
+	}
+	Invocations          MetricData
+	Duration             MetricData
+	Errors               MetricData
+	Throttles            MetricData
+	Memory               MetricData
+	ConcurrentExecutions MetricData
+}
 
 // CloudProvider represents the cloud provider type
 type CloudProvider string
@@ -29,24 +67,15 @@ type FunctionInfo struct {
 
 // Provider defines the interface for cloud function providers
 type Provider interface {
-	// GetProviderName returns the provider name (aws or gcp)
 	GetProviderName() CloudProvider
-	
-	// GetRegion returns the current region/location
 	GetRegion() string
-	
-	// ListFunctions lists all functions
+	GetAccountID(ctx context.Context) (string, error)
 	ListFunctions(ctx context.Context) ([]FunctionInfo, error)
-	
-	// GetFunction gets details about a specific function
 	GetFunction(ctx context.Context, name string) (*FunctionInfo, error)
-	
-	// GetFunctionCode gets the code/source for a function
 	GetFunctionCode(ctx context.Context, name string) (string, error)
-	
-	// GetFunctionLogs gets logs for a function
+	DownloadFunctionCode(ctx context.Context, name, destination string) error
 	GetFunctionLogs(ctx context.Context, name string, limit int) ([]string, error)
-	
-	// GetEndpoints gets API endpoints associated with a function
+	StreamFunctionLogs(ctx context.Context, name string) (<-chan LogEntry, <-chan error)
+	GetFunctionMetrics(ctx context.Context, name string, startTime, endTime time.Time) (*FunctionMetrics, error)
 	GetEndpoints(ctx context.Context, name string) ([]string, error)
 }

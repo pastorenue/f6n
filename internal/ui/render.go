@@ -14,56 +14,14 @@ import (
 
 // renderView renders the main view
 func renderView(m Model) string {
-	if m.err != nil {
-		errView := fmt.Sprintf("\n  %s %v\n\n  Press q to quit.\n", 
-			styles.ErrorStyle.Render("Error:"), m.err)
-		return renderASCII(m.width) + "\n" + errView
-	}
-
-	if m.loading {
-		return renderASCII(m.width) + "\n\n  Loading Lambda functions...\n\n"
-	}
-
-	var content string
-
-	// ASCII Art Header
+	// ASCII Art Header - always shown
 	ascii := renderASCII(m.width)
 
-	// Info rows
-	info := renderInfo(m.provider, m.environment, len(m.functions))
+	// Info rows - always shown
+	info := renderInfo(m)
 
-	// Shortcuts
-	shortcuts := renderShortcuts()
-
-	// Filter/Command input (show when in input mode or when filter is active)
-	var inputBox string
-	if m.inputMode == FilterMode || m.inputMode == CommandMode {
-		inputBox = m.textInput.View() + "\n"
-	} else if m.filterActive {
-		// Show active filter indicator
-		filterIndicator := styles.CommandKeyStyle.Render("Filter active:") + " " + 
-			styles.InfoValueStyle.Render(m.activeFilter) + " " +
-			styles.HelpStyle.Render("(press Esc to clear)")
-		inputBox = filterIndicator + "\n"
-	}
-
-	// Main content
-	if len(m.functions) == 0 {
-		content = "\n  No Lambda functions found in this region.\n\n  " +
-			styles.HelpStyle.Render("Press 'r' to refresh or 'q' to quit")
-	} else if m.currentView == ListView {
-		content = inputBox + m.table.View()
-	} else {
-		content = m.viewport.View()
-	}
-
-	// Help text
-	var help string
-	if m.currentView == ListView {
-		help = styles.HelpStyle.Render("Use keyboard shortcuts above to navigate")
-	} else {
-		help = styles.HelpStyle.Render("↑/↓: scroll • esc: back • q: quit")
-	}
+	// Shortcuts - context-sensitive but always shown
+	shortcuts := renderShortcuts(m)
 
 	// Combine ASCII art, info and shortcuts side by side
 	headerLayout := lipgloss.JoinHorizontal(
@@ -78,14 +36,62 @@ func renderView(m Model) string {
 		MarginRight(4).
 		Render(ascii)
 
+	var content string
+	var help string
+
+	// Handle different states
+	if m.err != nil {
+		content = fmt.Sprintf("\n  %s %v\n\n  Press q to quit.\n",
+			styles.ErrorStyle.Render("Error:"), m.err)
+		help = styles.HelpStyle.Render("Error occurred - check configuration")
+	} else if m.loading {
+		content = "\n\n  Loading Lambda functions...\n\n"
+		help = styles.HelpStyle.Render("Please wait...")
+	} else {
+		// Normal view content
+		// Filter/Command input (show when in input mode or when filter is active)
+		var inputBox string
+		if m.inputMode == FilterMode || m.inputMode == CommandMode {
+			inputBox = m.textInput.View() + "\n"
+		} else if m.filterActive {
+			// Show active filter indicator
+			filterIndicator := styles.CommandKeyStyle.Render("Filter active:") + " " +
+				styles.InfoValueStyle.Render(m.activeFilter) + " " +
+				styles.HelpStyle.Render("(press Esc to clear)")
+			inputBox = filterIndicator + "\n"
+		}
+
+		// Main content
+		if len(m.functions) == 0 {
+			content = "\n  No Lambda functions found in this region.\n\n  " +
+				styles.HelpStyle.Render("Press 'r' to refresh or 'q' to quit")
+		} else if m.currentView == ListView {
+			content = inputBox + m.table.View()
+		} else if m.currentView == CodeView && m.editMode {
+			// Show textarea when in edit mode
+			editHeader := styles.InfoLabelStyle.Render("✏️  EDIT MODE") +
+				styles.HelpStyle.Render(" (Ctrl+S to save, E to cancel)")
+			content = editHeader + "\n\n" + m.textarea.View()
+		} else {
+			content = m.viewport.View()
+		}
+
+		// Help text
+		if m.currentView == ListView {
+			help = styles.HelpStyle.Render("Use keyboard shortcuts above to navigate")
+		} else {
+			help = styles.HelpStyle.Render("↑/↓: scroll • esc: back • q: quit")
+		}
+	}
+
 	// Combine all elements
 	view := fmt.Sprintf("%s\n\n%s\n\n%s\n\n%s", logoLayout, headerLayout, content, help)
-	
+
 	// Apply top padding using lipgloss style
 	paddedView := lipgloss.NewStyle().
 		PaddingTop(2).
 		Render(view)
-	
+
 	return paddedView
 }
 
@@ -97,10 +103,10 @@ _/ ____\/  _____/ ____
  |  |  \  |__\  \   |  \
  |__|   \_____  /___|  /
               \/     \/ `
-	
+
 	// Apply yellow color first
 	styledArt := styles.ASCIIStyle.Render(art)
-	
+
 	// Center-align the ASCII art with the terminal width
 	if width > 0 {
 		return lipgloss.NewStyle().
@@ -108,23 +114,30 @@ _/ ____\/  _____/ ____
 			Align(lipgloss.Center).
 			Render(styledArt)
 	}
-	
+
 	return styledArt
 }
 
 // renderInfo renders the info section in a single column
-func renderInfo(prov provider.Provider, environment string, functionCount int) string {
-	providerName := string(prov.GetProviderName())
-	region := prov.GetRegion()
-	
+func renderInfo(m Model) string {
+	providerName := string(m.provider.GetProviderName())
+	region := m.provider.GetRegion()
+	accountID := m.accountID
+
+	accountKey := "Account"
+	if providerName == "gcp" {
+		accountKey = "Project"
+	}
+
 	info := []struct {
 		key   string
 		value string
 	}{
 		{"Provider", strings.ToUpper(providerName)},
+		{accountKey, accountID},
 		{"Region", region},
-		{"Environment", environment},
-		{"Functions", fmt.Sprintf("%d", functionCount)},
+		{"Environment", m.environment},
+		{"Functions", fmt.Sprintf("%d", len(m.functions))},
 		{"CPU", getCPUInfo()},
 		{"MEM", getMemInfo()},
 		{"OS", getOSInfo()},
@@ -137,6 +150,10 @@ func renderInfo(prov provider.Provider, environment string, functionCount int) s
 		// Pink for key, teal for value
 		line := styles.CommandKeyStyle.Render(item.key+":") + " " + styles.InfoValueStyle.Render(item.value)
 		lines = append(lines, line)
+	}
+
+	if providerName == "gcp" {
+		lines = append(lines, styles.HelpStyle.Render("\n(Cloud Functions, 1st Gen)"))
 	}
 
 	return strings.Join(lines, "\n")
@@ -169,19 +186,96 @@ func getUserInfo() string {
 }
 
 // renderShortcuts renders the keyboard shortcuts bar in a single column
-func renderShortcuts() string {
-	shortcuts := []struct {
+func renderShortcuts(m Model) string {
+	var shortcuts []struct {
 		key   string
 		value string
-	}{
-		{"<enter>", "view details"},
-		{"<\\>", "filter"},
-		{"<:>", "command"},
-		{"<l>", "logs"},
-		{"<a>", "api gateway"},
-		{"<c>", "view code"},
-		{"<r>", "refresh"},
-		{"<q>", "quit"},
+	}
+
+	// Context-sensitive shortcuts based on current view
+	switch m.currentView {
+	case ListView:
+		shortcuts = []struct {
+			key   string
+			value string
+		}{
+			{"<enter>", "details"},
+			{"<l>", "logs"},
+			{"<m>", "metrics"},
+			{"<c>", "code"},
+			{"<w>", "download"},
+			{"<r>", "refresh"},
+			{"<q>", "quit"},
+		}
+	case CodeView:
+		if m.editMode {
+			shortcuts = []struct {
+				key   string
+				value string
+			}{
+				{"<ctrl+s>", "save"},
+				{"<e>", "cancel edit"},
+				{"<esc>", "back to list"},
+				{"<q>", "quit"},
+			}
+		} else {
+			shortcuts = []struct {
+				key   string
+				value string
+			}{
+				{"<e>", "edit"},
+				{"<v>", "view downloaded"},
+				{"<esc>", "back to list"},
+				{"<q>", "quit"},
+			}
+		}
+	case CodeDisplayView:
+		shortcuts = []struct {
+			key   string
+			value string
+		}{
+			{"<esc>", "back to code"},
+			{"<q>", "quit"},
+		}
+	case LogsView:
+		if m.streamingLogs {
+			shortcuts = []struct {
+				key   string
+				value string
+			}{
+				{"<s>", "stop streaming"},
+				{"<l>", "static logs"},
+				{"<esc>", "back to list"},
+				{"<q>", "quit"},
+			}
+		} else {
+			shortcuts = []struct {
+				key   string
+				value string
+			}{
+				{"<s>", "stream logs"},
+				{"<l>", "refresh logs"},
+				{"<esc>", "back to list"},
+				{"<q>", "quit"},
+			}
+		}
+	case MetricsView:
+		shortcuts = []struct {
+			key   string
+			value string
+		}{
+			{"<m>", "refresh metrics"},
+			{"<esc>", "back to list"},
+			{"<q>", "quit"},
+		}
+	default:
+		shortcuts = []struct {
+			key   string
+			value string
+		}{
+			{"<esc>", "back"},
+			{"<q>", "quit"},
+		}
 	}
 
 	// Build shortcuts in single column

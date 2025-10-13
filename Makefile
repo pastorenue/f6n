@@ -32,7 +32,7 @@ build:
 ## run: Run the application
 run: build
 	@echo "Running $(BINARY_NAME)..."
-	$(BINARY_PATH)
+	script -q /dev/null $(BINARY_PATH)
 
 ## test: Run tests
 test:
