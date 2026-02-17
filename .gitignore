@@ -42,4 +42,4 @@ build/
 tmp/
 
 # Binary name
-f6n
+bin/f6n
