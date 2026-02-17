@@ -1,0 +1,31 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: f6n:local
+    environment:
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_PROFILE
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+      - STAGE=${STAGE:-dev}
+      - CLOUD_PROVIDER=${CLOUD_PROVIDER:-aws}
+      - GCP_PROJECT
+      - GCP_REGION
+    stdin_open: true
+    tty: true
+
+  dev:
+    image: golang:1.24-bullseye
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - go-build-cache:/go/pkg/mod
+    environment:
+      - GO111MODULE=on
+    entrypoint: ["/bin/bash", "-c"]
+
+volumes:
+  go-build-cache:

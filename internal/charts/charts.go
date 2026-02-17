@@ -120,12 +120,14 @@ func RenderTimeSeriesChart(data []provider.MetricDataPoint, width, height int, t
 		return ChartStyle.Render(fmt.Sprintf("%s\n\nNo data available", title))
 	}
 
-	// Ensure minimum dimensions
-	if width < 20 {
-		width = 20
+	// Normalize dimensions and derive usable space for bars/rows
+	usableWidth := width
+	if usableWidth < 20 {
+		usableWidth = 20
 	}
-	if height < 3 {
-		height = 3
+	usableHeight := height
+	if usableHeight < 3 {
+		usableHeight = 3
 	}
 
 	// Find min and max values
@@ -148,6 +150,13 @@ func RenderTimeSeriesChart(data []provider.MetricDataPoint, width, height int, t
 
 	// Show recent values as bars
 	recentCount := 8
+	if usableHeight-2 < recentCount {
+		recentCount = usableHeight - 2
+	}
+	if recentCount < 1 {
+		recentCount = 1
+	}
+
 	if len(data) < recentCount {
 		recentCount = len(data)
 	}
@@ -157,9 +166,14 @@ func RenderTimeSeriesChart(data []provider.MetricDataPoint, width, height int, t
 		point := data[i]
 
 		// Calculate bar length (max 30 chars)
-		barLength := 30
+		maxBar := usableWidth - 10
+		if maxBar < 1 {
+			maxBar = 1
+		}
+
+		barLength := maxBar
 		if max > min {
-			barLength = int((point.Value - min) / (max - min) * 30)
+			barLength = int((point.Value - min) / (max - min) * float64(maxBar))
 		}
 		if barLength < 1 {
 			barLength = 1

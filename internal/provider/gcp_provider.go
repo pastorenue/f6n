@@ -311,7 +311,9 @@ func (p *GCPProvider) extractZip(src, dest string) error {
 		}
 
 		if file.FileInfo().IsDir() {
-			os.MkdirAll(path, file.FileInfo().Mode())
+			if err := os.MkdirAll(path, file.FileInfo().Mode()); err != nil {
+				return fmt.Errorf("failed to create directory %s: %w", path, err)
+			}
 			continue
 		}
 
